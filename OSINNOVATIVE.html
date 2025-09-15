@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CPU Scheduling Simulator</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #000;
+      color: #fff;
+      text-align: center;
+      padding: 20px;
+    }
+    input, select, button {
+      padding: 8px;
+      margin: 5px;
+      border-radius: 4px;
+      border: none;
+    }
+    table {
+      margin: 10px auto;
+      border-collapse: collapse;
+    }
+    th, td {
+      border: 1px solid #999;
+      padding: 6px 10px;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <h2>CPU Scheduling Simulator</h2>
+
+  <!-- Dropdown for choosing algorithm -->
+  <select id="algorithm" onchange="toggleQuantumInput()">
+    <option value="fcfs">FCFS</option>
+    <option value="sjf">SJF</option>
+    <option value="srtf">SRTF</option>
+    <option value="rr">Round Robin</option>
+  </select>
+
+  <!-- Time Quantum input (visible only for RR) -->
+  <div id="quantumDiv" style="display:none;">
+    <input id="quantum" type="number" placeholder="Time Quantum">
+  </div>
+
+  <!-- Input fields for processes -->
+  <h4>Enter Process Details</h4>
+  <table id="processTable">
+    <tr><th>Process</th><th>Arrival Time</th><th>Burst Time</th></tr>
+    <tbody id="tableBody">
+      <tr><td>P1</td><td><input id="a1" type="number"></td><td><input id="b1" type="number"></td></tr>
+      <tr><td>P2</td><td><input id="a2" type="number"></td><td><input id="b2" type="number"></td></tr>
+      <tr><td>P3</td><td><input id="a3" type="number"></td><td><input id="b3" type="number"></td></tr>
+    </tbody>
+  </table>
+
+  <button onclick="addProcess()">Add Process</button>
+  <button onclick="runSimulation()">Simulate</button>
+
+  <!-- Output areas -->
+  <div id="ganttChart"></div>
+  <div id="result"></div>
+
+  <script>
+    let processCount = 3;
+
+    function addProcess() {
+      processCount++;
+      const tbody = document.getElementById("tableBody");
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>P${processCount}</td>
+        <td><input id="a${processCount}" type="number"></td>
+        <td><input id="b${processCount}" type="number"></td>
+      `;
+      tbody.appendChild(row);
+    }
+
+    function toggleQuantumInput() {
+      const algo = document.getElementById("algorithm").value;
+      document.getElementById("quantumDiv").style.display = (algo === "rr") ? "block" : "none";
+    }
+
+    function runSimulation() {
+      const algo = document.getElementById("algorithm").value;
+      const quantum = parseInt(document.getElementById("quantum").value);
+
+      const processes = [];
+      for (let i = 1; i <= processCount; i++) {
+        const arrival = +document.getElementById(`a${i}`).value;
+        const burst = +document.getElementById(`b${i}`).value;
+        if (!isNaN(arrival) && !isNaN(burst)) {
+          processes.push({ id: `P${i}`, arrival, burst });
+        }
+      }
+
+      let result = [], timeline = [];
+
+      if (algo === "fcfs") ({ timeline, result } = fcfs(processes));
+      else if (algo === "sjf") ({ timeline, result } = sjf(processes));
+      else if (algo === "srtf") ({ timeline, result } = srtf(processes));
+      else if (algo === "rr") {
+        if (!quantum) return alert("Please enter a valid quantum.");
+        ({ timeline, result } = rr(processes, quantum));
+      }
+
+      showGanttChart(timeline);
+      showResultTable(result);
+    }
+
+    function fcfs(processes) {
+      processes.sort((a, b) => a.arrival - b.arrival);
+      let time = 0, timeline = [], result = [];
+
+      for (let p of processes) {
+        time = Math.max(time, p.arrival);
+        timeline.push({ id: p.id, start: time, end: time + p.burst });
+        let wt = time - p.arrival;
+        let tat = wt + p.burst;
+        result.push({ id: p.id, wt, tat });
+        time += p.burst;
+      }
+      return { timeline, result };
+    }
+
+    function sjf(processes) {
+      let time = 0, completed = [], timeline = [], result = [];
+
+      while (completed.length < processes.length) {
+        let ready = processes.filter(p => !completed.includes(p.id) && p.arrival <= time);
+        if (ready.length === 0) { time++; continue; }
+        let shortest = ready.reduce((a, b) => a.burst < b.burst ? a : b);
+        time = Math.max(time, shortest.arrival);
+        timeline.push({ id: shortest.id, start: time, end: time + shortest.burst });
+        let wt = time - shortest.arrival;
+        let tat = wt + shortest.burst;
+        result.push({ id: shortest.id, wt, tat });
+        time += shortest.burst;
+        completed.push(shortest.id);
+      }
+
+      return { timeline, result };
+    }
+
+    function srtf(processes) {
+      let time = 0, timeline = [], result = [];
+      let burstLeft = processes.map(p => p.burst);
+      let complete = Array(processes.length).fill(false);
+      let done = 0;
+
+      while (done < processes.length) {
+        let idx = -1, min = Infinity;
+        for (let i = 0; i < processes.length; i++) {
+          if (!complete[i] && processes[i].arrival <= time && burstLeft[i] < min && burstLeft[i] > 0) {
+            min = burstLeft[i];
+            idx = i;
+          }
+        }
+
+        if (idx === -1) { time++; continue; }
+
+        if (!timeline.length || timeline[timeline.length - 1].id !== processes[idx].id) {
+          timeline.push({ id: processes[idx].id, start: time, end: time + 1 });
+        } else {
+          timeline[timeline.length - 1].end++;
+        }
+
+        burstLeft[idx]--;
+        time++;
+
+        if (burstLeft[idx] === 0) {
+          complete[idx] = true;
+          done++;
+          const tat = time - processes[idx].arrival;
+          const wt = tat - processes[idx].burst;
+          result.push({ id: processes[idx].id, wt, tat });
+        }
+      }
+
+      return { timeline, result };
+    }
+
+    function rr(processes, q) {
+      let time = 0, queue = [], result = [], timeline = [], done = 0;
+      let burstLeft = processes.map(p => p.burst);
+      let completed = Array(processes.length).fill(false);
+      const order = processes.map((p, i) => ({ ...p, idx: i })).sort((a, b) => a.arrival - b.arrival);
+      let i = 0;
+
+      while (i < processes.length && order[i].arrival <= time) queue.push(order[i++].idx);
+
+      while (queue.length) {
+        let idx = queue.shift();
+        const execTime = Math.min(q, burstLeft[idx]);
+        timeline.push({ id: processes[idx].id, start: time, end: time + execTime });
+        time += execTime;
+        burstLeft[idx] -= execTime;
+
+        while (i < processes.length && order[i].arrival <= time) queue.push(order[i++].idx);
+
+        if (burstLeft[idx] > 0) queue.push(idx);
+        else {
+          const tat = time - processes[idx].arrival;
+          const wt = tat - processes[idx].burst;
+          result.push({ id: processes[idx].id, wt, tat });
+          done++;
+        }
+      }
+
+      return { timeline, result };
+    }
+
+    function showGanttChart(timeline) {
+      let html = `<h3>Gantt Chart</h3><div style="display:flex;justify-content:center;gap:5px;flex-wrap:wrap;">`;
+      const colors = {};
+      const getColor = () => {
+        let color;
+        do {
+          const r = Math.floor(Math.random() * 156 + 100);
+          const g = Math.floor(Math.random() * 156 + 100);
+          const b = Math.floor(Math.random() * 156 + 100);
+          color = `rgb(${r},${g},${b})`;
+        } while (color === "#000000");
+        return color;
+      };
+      timeline.forEach(t => {
+        if (!colors[t.id]) colors[t.id] = getColor();
+      });
+
+      for (let t of timeline) {
+        const width = (t.end - t.start) * 40;
+        html += `
+          <div style="
+            background:${colors[t.id]};
+            width:${width}px;
+            padding:5px;
+            text-align:center;
+            color:#000;
+            border-radius:6px;
+            position:relative;
+            font-weight:bold;">
+            ${t.id}
+            <div style="position:absolute;bottom:-18px;left:0;font-size:12px;color:#fff;">${t.start}</div>
+            <div style="position:absolute;bottom:-18px;right:0;font-size:12px;color:#fff;">${t.end}</div>
+          </div>`;
+      }
+
+      html += "</div>";
+      document.getElementById("ganttChart").innerHTML = html;
+    }
+
+    function showResultTable(result) {
+      let html = `<h3>Result Table</h3><table><tr><th>Process</th><th>Waiting Time</th><th>Turnaround Time</th></tr>`;
+      let totalWT = 0, totalTAT = 0;
+
+      for (let r of result) {
+        html += `<tr><td>${r.id}</td><td>${r.wt}</td><td>${r.tat}</td></tr>`;
+        totalWT += r.wt;
+        totalTAT += r.tat;
+      }
+
+      html += `</table><p>Average Waiting Time: ${(totalWT / result.length).toFixed(2)}</p>`;
+      html += `<p>Average Turnaround Time: ${(totalTAT / result.length).toFixed(2)}</p>`;
+      document.getElementById("result").innerHTML = html;
+    }
+  </script>
+</body>
+</html>
